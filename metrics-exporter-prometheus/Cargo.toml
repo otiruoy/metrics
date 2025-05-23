@@ -30,6 +30,7 @@ _hyper-client = [
     "hyper-util/client-legacy",
     "hyper-rustls",
 ]
+remote-write = ["dep:prost", "dep:snap"]
 
 [dependencies]
 base64 = { workspace = true }
@@ -51,6 +52,8 @@ quanta = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+snap = { version = "1.1.1", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

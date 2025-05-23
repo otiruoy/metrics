@@ -120,8 +120,8 @@ pub use distribution::{Distribution, DistributionBuilder};
 
 mod exporter;
 pub use self::exporter::builder::PrometheusBuilder;
-#[cfg(any(feature = "http-listener", feature = "push-gateway"))]
-#[cfg_attr(docsrs, doc(cfg(any(feature = "http-listener", feature = "push-gateway"))))]
+#[cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))))]
 pub use self::exporter::ExporterFuture;
 
 pub mod formatting;

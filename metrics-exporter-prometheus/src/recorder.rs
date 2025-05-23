@@ -15,6 +15,14 @@ use crate::formatting::{
 };
 use crate::registry::GenerationalAtomicStorage;
 
+use crate::exporter::remote_write::WriteRequest;
+use crate::exporter::remote_write::Sample;
+use crate::exporter::remote_write::TimeSeries;
+use crate::exporter::remote_write::Label;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
+
 #[derive(Debug)]
 pub(crate) struct Inner {
     pub registry: Registry<Key, GenerationalAtomicStorage>,
@@ -240,7 +248,179 @@ impl Inner {
     fn run_upkeep(&self) {
         self.drain_histograms_to_distributions();
     }
+
+    #[cfg(feature = "remote-write")]
+    fn remote_write(&self) -> WriteRequest {
+        let timestamp = get_timestamp().expect("TODO: What errors to handle?");
+        let Snapshot { mut counters, mut distributions, mut gauges } = self.get_recent_metrics();
+
+        let mut output = String::new();
+        let descriptions = self.descriptions.read().unwrap_or_else(PoisonError::into_inner);
+
+        let mut timeseries = Vec::new();
+        for (metric_name,value5) in counters.drain() {
+
+            let mut labels = Vec::new();
+            let mut samples = Vec::new();
+
+            labels.push(Label {name: "__name__".to_string(), value: metric_name.clone()});
+
+            for (metric_labels,value) in value5 {
+                for metric_label in metric_labels {
+                    if let Some((first, rest)) = metric_label.split_once('=') {
+
+                        if labels.iter().any(|s| s.name == first.to_string()) {
+                            let mut ts = TimeSeries {samples: samples.clone(), labels: labels.clone()};
+                            timeseries.push(ts);
+                            labels.clear();
+                            samples.clear();
+                            labels.push(Label {name: "__name__".to_string(), value: metric_name.clone()});
+                            labels.push(Label {name: first.to_string(), value: rest.to_string() });
+                        } else {
+                            labels.push(Label {name: first.to_string(), value: rest.to_string() });
+                        }
+                    }
+                }
+                samples.push(Sample { value: value as f64, timestamp });
+            }
+
+            let ts = TimeSeries {samples: samples.clone(), labels: labels.clone()};
+            timeseries.push(ts);
+        }
+
+        let mut timeseries = Vec::new();
+        for (metric_name,value5) in gauges.drain() {
+
+            let mut labels = Vec::new();
+            let mut samples = Vec::new();
+
+            labels.push(Label {name: "__name__".to_string(), value: metric_name.clone()});
+
+            for (metric_labels,value) in value5 {
+                for metric_label in metric_labels {
+                    if let Some((first, rest)) = metric_label.split_once('=') {
+
+                        if labels.iter().any(|s| s.name == first.to_string()) {
+                            let mut ts = TimeSeries {samples: samples.clone(), labels: labels.clone()};
+                            timeseries.push(ts);
+                            labels.clear();
+                            samples.clear();
+                            labels.push(Label {name: "__name__".to_string(), value: metric_name.clone()});
+                            labels.push(Label {name: first.to_string(), value: rest.to_string() });
+                        } else {
+                            labels.push(Label {name: first.to_string(), value: rest.to_string() });
+                        }
+                    }
+                }
+                samples.push(Sample { value: value as f64, timestamp });
+            }
+
+            let ts = TimeSeries {samples: samples.clone(), labels: labels.clone()};
+            timeseries.push(ts);
+        }
+
+        for (name, mut by_labels) in distributions.drain() {
+            let unit = descriptions.get(name.as_str()).and_then(|(desc, unit)| {
+                write_help_line(&mut output, name.as_str(), desc);
+                *unit
+            });
+
+            let distribution_type = self.distribution_builder.get_distribution_type(name.as_str());
+            write_type_line(&mut output, name.as_str(), distribution_type);
+            for (labels, distribution) in by_labels.drain(..) {
+                let (sum, count) = match distribution {
+                    Distribution::Summary(summary, quantiles, sum) => {
+                        let snapshot = summary.snapshot(Instant::now());
+                        for quantile in quantiles.iter() {
+                            let value = snapshot.quantile(quantile.value()).unwrap_or(0.0);
+                            write_metric_line(
+                                &mut output,
+                                &name,
+                                None,
+                                &labels,
+                                Some(("quantile", quantile.value())),
+                                value,
+                                unit.filter(|_| self.enable_unit_suffix),
+                            );
+                        }
+
+                        (sum, summary.count() as u64)
+                    }
+                    Distribution::Histogram(histogram) => {
+                        for (le, count) in histogram.buckets() {
+                            write_metric_line(
+                                &mut output,
+                                &name,
+                                Some("bucket"),
+                                &labels,
+                                Some(("le", le)),
+                                count,
+                                unit.filter(|_| self.enable_unit_suffix),
+                            );
+                        }
+                        write_metric_line(
+                            &mut output,
+                            &name,
+                            Some("bucket"),
+                            &labels,
+                            Some(("le", "+Inf")),
+                            histogram.count(),
+                            unit.filter(|_| self.enable_unit_suffix),
+                        );
+
+                        (histogram.sum(), histogram.count())
+                    }
+                };
+
+                write_metric_line::<&str, f64>(
+                    &mut output,
+                    &name,
+                    Some("sum"),
+                    &labels,
+                    None,
+                    sum,
+                    unit.filter(|_| self.enable_unit_suffix),
+                );
+                write_metric_line::<&str, u64>(
+                    &mut output,
+                    &name,
+                    Some("count"),
+                    &labels,
+                    None,
+                    count,
+                    unit.filter(|_| self.enable_unit_suffix),
+                );
+            }
+
+            output.push('\n');
+        }
+        let message: WriteRequest = WriteRequest {timeseries};
+        message
+    }
 }
+
+
+
+    fn get_timestamp() -> Result<i64, String> {
+        // Get the current system time
+        let now = SystemTime::now();
+
+        // Calculate the duration since the UNIX epoch
+        let duration_since_epoch = now.duration_since(UNIX_EPOCH).expect("REASON");
+
+        // Convert the duration to milliseconds as a u128
+        let milliseconds_timestamp_u128 = duration_since_epoch.as_millis();
+
+        // Check if the value fits within the range of i64
+        if milliseconds_timestamp_u128 > i64::MAX as u128 {
+            // Return an error if the value exceeds i64::MAX
+            Err("TODO: Add error but which".to_string())
+        } else {
+            // Safely cast to i64
+            Ok(milliseconds_timestamp_u128 as i64)
+        }
+    }
+
 
 /// A Prometheus recorder.
 ///
@@ -319,6 +499,12 @@ impl PrometheusHandle {
     /// the Prometheus exposition format.
     pub fn render(&self) -> String {
         self.inner.render()
+    }
+
+    /// Takes a snapshot of the metrics held by the recorder and generates a payload conforming to
+    /// the Prometheus remote write format
+    pub fn remote_write(&self) -> WriteRequest {
+        self.inner.remote_write()
     }
 
     /// Performs upkeeping operations to ensure metrics held by recorder are up-to-date and do not

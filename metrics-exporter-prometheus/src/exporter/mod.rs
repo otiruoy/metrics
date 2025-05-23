@@ -21,7 +21,7 @@ pub enum ExporterError {
     PushGateway(()),
 }
 /// Convenience type for Future implementing an exporter.
-#[cfg(any(feature = "http-listener", feature = "push-gateway"))]
+#[cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))]
 pub type ExporterFuture = Pin<Box<dyn Future<Output = Result<(), ExporterError>> + Send + 'static>>;
 
 #[cfg(feature = "http-listener")]
@@ -49,18 +49,30 @@ enum ExporterConfig {
         use_http_post_method: bool,
     },
 
+    // Run a remote write task sending to the given `endpoint` after `interval` time has elapsed,
+    // infinitely.
+    #[cfg(feature = "remote-write")]
+    RemoteWrite {
+        endpoint: Uri,
+        interval: Duration,
+        username: Option<String>,
+        password: Option<String>,
+    },
+
     #[allow(dead_code)]
     Unconfigured,
 }
 
 impl ExporterConfig {
-    #[cfg_attr(not(any(feature = "http-listener", feature = "push-gateway")), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write")), allow(dead_code))]
     fn as_type_str(&self) -> &'static str {
         match self {
             #[cfg(feature = "http-listener")]
             Self::HttpListener { .. } => "http-listener",
             #[cfg(feature = "push-gateway")]
             Self::PushGateway { .. } => "push-gateway",
+            #[cfg(feature = "remote-write")]
+            Self::RemoteWrite { .. } => "remote-write",
             Self::Unconfigured => "unconfigured,",
         }
     }
@@ -71,5 +83,8 @@ mod http_listener;
 
 #[cfg(feature = "push-gateway")]
 mod push_gateway;
+
+#[cfg(feature = "remote-write")]
+pub mod remote_write;
 
 pub(crate) mod builder;

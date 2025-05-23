@@ -29,13 +29,13 @@ use crate::registry::AtomicStorage;
 use crate::{common::BuildError, PrometheusHandle};
 
 use super::ExporterConfig;
-#[cfg(any(feature = "http-listener", feature = "push-gateway"))]
+#[cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))]
 use super::ExporterFuture;
 
 /// Builder for creating and installing a Prometheus recorder/exporter.
 #[derive(Debug)]
 pub struct PrometheusBuilder {
-    #[cfg_attr(not(any(feature = "http-listener", feature = "push-gateway")), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write")), allow(dead_code))]
     exporter_config: ExporterConfig,
     #[cfg(feature = "http-listener")]
     allowed_addresses: Option<Vec<IpNet>>,
@@ -139,6 +139,34 @@ impl PrometheusBuilder {
             use_http_post_method,
         };
 
+        Ok(self)
+    }
+
+    /// Configures the exporter to push periodic requests using Prometheus remote write.
+    ///
+    /// Running in remote write mode is mutually exclusive with the HTTP listener i.e. enabling the remote write will
+    /// disable the HTTP listener, and vise versa.
+    ///
+    /// Defaults to disabled.
+    #[cfg(feature = "remote-write")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "remote-write")))]
+    pub fn with_remote_write<T>(
+        mut self,
+        endpoint: T,
+        interval: Duration,
+        username: Option<String>,
+        password: Option<String>,
+    ) -> Result<Self, BuildError>
+    where
+        T: AsRef<str>,
+    {
+        self.exporter_config = ExporterConfig::RemoteWrite {
+            endpoint: Uri::try_from(endpoint.as_ref())
+                .map_err(|e| BuildError::InvalidRemoteWriteEndpoint(e.to_string()))?,
+            interval,
+            username,
+            password,
+        };
         Ok(self)
     }
 
@@ -380,8 +408,8 @@ impl PrometheusBuilder {
     ///
     /// If there is an error while either building the recorder and exporter, or installing the recorder and exporter,
     /// an error variant will be returned describing the error.
-    #[cfg(any(feature = "http-listener", feature = "push-gateway"))]
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "http-listener", feature = "push-gateway"))))]
+    #[cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))))]
     pub fn install(self) -> Result<(), BuildError> {
         use tokio::runtime;
 
@@ -457,8 +485,8 @@ impl PrometheusBuilder {
     /// If there is an error while building the recorder and exporter, an error variant will be returned describing the
     /// error.
     #[warn(clippy::too_many_lines)]
-    #[cfg(any(feature = "http-listener", feature = "push-gateway"))]
-    #[cfg_attr(docsrs, doc(cfg(any(feature = "http-listener", feature = "push-gateway"))))]
+    #[cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "http-listener", feature = "push-gateway", feature = "remote-write"))))]
     #[cfg_attr(not(feature = "http-listener"), allow(unused_mut))]
     pub fn build(mut self) -> Result<(PrometheusRecorder, ExporterFuture), BuildError> {
         #[cfg(feature = "http-listener")]
@@ -512,6 +540,20 @@ impl PrometheusBuilder {
                     use_http_post_method,
                     handle,
                 ),
+                #[cfg(feature = "remote-write")]
+                ExporterConfig::RemoteWrite {
+                    endpoint,
+                    interval,
+                    username,
+                    password,
+                } => { super::remote_write::new_remote_write(
+                    endpoint,
+                    interval,
+                    username,
+                    password,
+                    handle,
+                    )
+                }
             },
         ))
     }
