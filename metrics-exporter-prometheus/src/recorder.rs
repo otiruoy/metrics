@@ -287,7 +287,7 @@ impl Inner {
             let ts = TimeSeries {samples: samples.clone(), labels: labels.clone()};
             timeseries.push(ts);
         }
-
+        /*
         let mut timeseries = Vec::new();
         for (metric_name,value5) in gauges.drain() {
 
@@ -393,7 +393,7 @@ impl Inner {
             }
 
             output.push('\n');
-        }
+        }*/
         let message: WriteRequest = WriteRequest {timeseries};
         message
     }
@@ -503,6 +503,7 @@ impl PrometheusHandle {
 
     /// Takes a snapshot of the metrics held by the recorder and generates a payload conforming to
     /// the Prometheus remote write format
+    #[cfg(feature = "remote-write")]
     pub fn remote_write(&self) -> WriteRequest {
         self.inner.remote_write()
     }

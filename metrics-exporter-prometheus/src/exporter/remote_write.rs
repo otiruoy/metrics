@@ -155,7 +155,7 @@ pub(super) fn new_remote_write(
     })
 }
 
-#[cfg(feature = "push-gateway")]
+#[cfg(feature = "remote-write")]
 fn basic_auth(username: &str, password: Option<&str>) -> HeaderValue {
     use base64::prelude::BASE64_STANDARD;
     use base64::write::EncoderWriter;
